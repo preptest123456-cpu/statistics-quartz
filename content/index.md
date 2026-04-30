@@ -31,8 +31,9 @@ Master index linking every chapter and appendix in this vault.
 
 ## Companion Jupyter notebooks
 
-- `notebooks/Chapter_14_Simple_Linear_Regression.ipynb`  Armands Pizza worked example
-- `notebooks/Chapter_15_Multiple_Regression.ipynb`  Butler Trucking worked example
+- [Open Chapter 14 — Simple Linear Regression in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb) — Armands Pizza worked example
+- [Open Chapter 15 — Multiple Regression in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) — Butler Trucking worked example
+- [View all notebooks on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/tree/main/notebooks)
 
 ---
 _Total: 20 notes._
