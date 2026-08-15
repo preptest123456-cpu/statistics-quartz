@@ -1,0 +1,3 @@
+# Only needed for --fit pad (default) and --fit cover.
+# With --fit none the script runs on the standard library alone.
+Pillow>=10.0.0
