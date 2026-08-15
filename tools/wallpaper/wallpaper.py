@@ -78,6 +78,14 @@ COMPOSE_GUARD = (
 
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
+VARIANT_DIR = Path(__file__).with_name("variants")
+
+
+def list_variants() -> list[str]:
+    if not VARIANT_DIR.is_dir():
+        return []
+    return sorted(path.stem for path in VARIANT_DIR.glob("*.txt"))
+
 
 # --------------------------------------------------------------------------
 # geometry
@@ -328,6 +336,45 @@ def feather_mask(size: tuple[int, int], pad: tuple[int, int], feather: int):
     return mask
 
 
+def contact_sheet(paths: list[Path], dest: Path, *, sheet_width: int = 1920) -> None:
+    """Tile the candidates into one labelled image, for picking a keeper.
+
+    Candidates only differ in details you have to compare side by side (is the
+    eagle clipped? did the flag come out right?), and flipping between 4K files
+    makes that harder than it needs to be.
+    """
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    if not paths:
+        return
+
+    cols = 1 if len(paths) == 1 else (2 if len(paths) <= 4 else 3)
+    rows = math.ceil(len(paths) / cols)
+    gap = 16
+    cell_w = (sheet_width - gap * (cols + 1)) // cols
+
+    thumbs = []
+    for path in paths:
+        with Image.open(path) as im:
+            thumb = im.convert("RGB")
+            cell_h = max(1, round(cell_w * thumb.height / thumb.width))
+            thumbs.append(thumb.resize((cell_w, cell_h), Image.LANCZOS))
+
+    cell_h = max(t.height for t in thumbs)
+    sheet = Image.new("RGB", (sheet_width, gap + rows * (cell_h + gap)), (24, 24, 24))
+    draw = ImageDraw.Draw(sheet)
+
+    for index, (thumb, path) in enumerate(zip(thumbs, paths)):
+        x = gap + (index % cols) * (cell_w + gap)
+        y = gap + (index // cols) * (cell_h + gap)
+        sheet.paste(thumb, (x, y))
+        label = f"{index + 1}  {path.name}"
+        draw.rectangle([x, y, x + 9 * len(label) + 12, y + 22], fill=(0, 0, 0))
+        draw.text((x + 6, y + 6), label, fill=(255, 255, 255))
+
+    sheet.save(dest)
+
+
 def render(raw: bytes, plan: FitPlan, dest: Path, *, blur_fill: bool) -> None:
     if plan.fit == "none":
         dest.write_bytes(raw)
@@ -416,6 +463,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="file holding the scene prompt (default: prompt.txt beside this script)",
     )
     src.add_argument("--prompt", help="inline prompt text, overrides --prompt-file")
+    src.add_argument(
+        "--variant",
+        help=f"named scene variant from {VARIANT_DIR.name}/ ({', '.join(list_variants()) or 'none'})",
+    )
+    p.add_argument(
+        "--list-variants", action="store_true", help="print the available scene variants and exit"
+    )
 
     p.add_argument(
         "--model",
@@ -463,6 +517,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-original", action="store_true", help="also save the unmodified model output"
     )
     p.add_argument(
+        "--contact-sheet",
+        action="store_true",
+        help="when more than one image is written, also save a labelled montage for picking",
+    )
+    p.add_argument(
         "--no-compose-guard",
         action="store_true",
         help="do not append the framing/uncluttered-corner instructions to the prompt",
@@ -481,9 +540,18 @@ def load_prompt(args: argparse.Namespace) -> str:
     if args.prompt:
         text = args.prompt
     else:
-        if not args.prompt_file.is_file():
-            raise FileNotFoundError(f"prompt file not found: {args.prompt_file}")
-        text = args.prompt_file.read_text(encoding="utf-8")
+        if args.variant:
+            source = VARIANT_DIR / f"{args.variant}.txt"
+            if not source.is_file():
+                available = ", ".join(list_variants()) or "none found"
+                raise FileNotFoundError(
+                    f"unknown variant {args.variant!r}; available: {available}"
+                )
+        else:
+            source = args.prompt_file
+        if not source.is_file():
+            raise FileNotFoundError(f"prompt file not found: {source}")
+        text = source.read_text(encoding="utf-8")
     text = text.strip()
     if not text:
         raise ValueError("prompt is empty")
@@ -493,6 +561,18 @@ def load_prompt(args: argparse.Namespace) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     dst = args.resolution
+
+    if args.list_variants:
+        names = list_variants()
+        if not names:
+            print(f"no variants found in {VARIANT_DIR}")
+            return EXIT_OK
+        print(f"scene variants in {VARIANT_DIR}:")
+        for name in names:
+            first = (VARIANT_DIR / f"{name}.txt").read_text(encoding="utf-8").strip()
+            summary = " ".join(first.split())[:90]
+            print(f"  {name:<12} {summary}...")
+        return EXIT_OK
 
     try:
         prompt = load_prompt(args)
@@ -577,6 +657,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     written = 0
+    saved: list[Path] = []
     for index, item in enumerate(data, start=1):
         suffix = f"-{index}" if len(data) > 1 else ""
         stem = f"{args.basename}-{stamp}{suffix}"
@@ -621,7 +702,17 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         written += 1
+        saved.append(dest)
         print(f"[{index}] wrote {dest} ({dst[0]}x{dst[1]})", file=sys.stderr)
+
+    if args.contact_sheet and len(saved) > 1:
+        sheet = args.out / f"{args.basename}-{stamp}-contact.jpg"
+        try:
+            contact_sheet(saved, sheet)
+        except (OSError, ImportError, RuntimeError) as exc:
+            print(f"warning: could not build contact sheet: {exc}", file=sys.stderr)
+        else:
+            print(f"contact sheet: {sheet}", file=sys.stderr)
 
     if written == 0:
         print("error: no images were written", file=sys.stderr)

@@ -7,9 +7,28 @@ OpenAI Images API. Stdlib only for the API call; Pillow only for resizing.
 python -m pip install -r requirements.txt   # Pillow, only needed for --fit pad/cover
 export OPENAI_API_KEY=sk-...
 
-python wallpaper.py --dry-run               # print the plan and prompt, no API call
-python wallpaper.py -n 3 --out ./out        # generate three candidates
+python wallpaper.py --dry-run                        # print the plan and prompt, no API call
+python wallpaper.py -n 3 --contact-sheet --out ./out # three candidates plus a montage to pick from
+python wallpaper.py --variant winter -n 3            # a different take on the same scene
+python test_wallpaper.py                             # offline test suite, no key needed
 ```
+
+## Scenes
+
+`prompt.txt` is the default scene: a log cabin at golden hour, porch and flag,
+eagle in flight, dog and horse, river in the foreground, peaks behind. Three
+variants of the same location ship in `variants/` and are selected by name with
+`--variant` (`--list-variants` to see them):
+
+| variant | what changes |
+|---|---|
+| `dawn-mist` | first light, layered valley mist, lamplit window, frost and breath |
+| `winter` | deep snow, icicles, long blue shadows, partly frozen river |
+| `storm-break` | sunlit subjects against a retreating storm wall, wet everything, faint rainbow |
+
+All four keep the same framing discipline: the eagle is placed low in the upper
+half with sky above it, and the dog's feet and the horse's hooves are called out
+as fully in frame. That matters because of the crop arithmetic below.
 
 ## The framing problem this script exists to handle
 
@@ -53,6 +72,21 @@ with `--no-compose-guard`.
 - **Exit codes are real.** `0` success, `2` usage/config, `3` API failure after
   retries, `4` local I/O or image-processing failure, `130` interrupt. A run
   that writes no image never exits `0`.
+
+## Picking a keeper
+
+`--contact-sheet` writes a labelled montage alongside the full-size files
+whenever more than one image is produced. Candidates differ in details you have
+to compare side by side — whether the eagle is clipped, whether the flag came
+out right — and that is tedious to do by flipping between 4K files.
+
+## Tests
+
+`python test_wallpaper.py` runs the whole suite with no API key and no network;
+it also works under `pytest` if you have it. The crop arithmetic is pinned to
+exact pixel values, and the render tests use a synthetic source with marker
+bands on the extreme top and bottom rows to prove `pad` keeps them and `cover`
+does not. Render tests self-skip if Pillow is missing.
 
 ## Expected failure modes for this prompt
 
