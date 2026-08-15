@@ -180,6 +180,8 @@ def main(argv=None):
     p.add_argument("--retries", type=int, default=4)
     p.add_argument("--timeout", type=float, default=300.0)
     p.add_argument("--prompt-file", type=Path, help="use this file instead of the built-in scene")
+    p.add_argument("--from-file", type=Path, metavar="IMAGE",
+                   help="skip the API and just fit an image you already have (no key needed)")
     p.add_argument("--dry-run", action="store_true", help="print the plan, make no API call")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
@@ -197,6 +199,21 @@ def main(argv=None):
     sw, sh = SIZES[args.model]
     print(f"{args.model}: {sw}x{sh} ({sw / sh:.3f}) -> {dst[0]}x{dst[1]} "
           f"({dst[0] / dst[1]:.3f}), fit={args.fit}, n={n}", file=sys.stderr)
+
+    # Fit an image you already have (e.g. downloaded from a chat UI). No key needed.
+    if args.from_file:
+        if not args.from_file.is_file():
+            print(f"error: no such file: {args.from_file}", file=sys.stderr)
+            return 2
+        try:
+            args.out.mkdir(parents=True, exist_ok=True)
+            dest = args.out / f"{args.from_file.stem}-{dst[0]}x{dst[1]}.png"
+            fit_image(args.from_file.read_bytes(), dst, args.fit, anchor, dest)
+        except (OSError, ImportError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 4
+        print(f"wrote {dest}", file=sys.stderr)
+        return 0
 
     if args.dry_run:
         print("\n--- prompt ---\n" + prompt + "--- end ---\ndry run: no API call", file=sys.stderr)

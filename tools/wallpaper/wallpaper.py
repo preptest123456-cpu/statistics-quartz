@@ -480,6 +480,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--size", help="force a source size, e.g. 1536x1024")
     p.add_argument("--quality", help="model quality hint, e.g. high / hd")
     p.add_argument(
+        "--from-file",
+        type=Path,
+        metavar="IMAGE",
+        help=(
+            "skip the API entirely and fit an image you already have (e.g. one "
+            "downloaded from a chat UI) to the target resolution"
+        ),
+    )
+    p.add_argument(
         "--resolution",
         type=parse_resolution,
         default=(3840, 2160),
@@ -558,6 +567,47 @@ def load_prompt(args: argparse.Namespace) -> str:
     return text
 
 
+def fit_existing(args: argparse.Namespace, dst: tuple[int, int]) -> int:
+    """Fit an image the user already has — no API key and no network needed.
+
+    Covers the common case of generating in a chat UI (which returns whatever
+    aspect ratio it likes) and still wanting a correctly fitted wallpaper.
+    """
+    source = args.from_file
+    if not source.is_file():
+        print(f"error: no such file: {source}", file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        raw = source.read_bytes()
+        Image, _ = load_pillow()
+        import io  # noqa: PLC0415
+
+        with Image.open(io.BytesIO(raw)) as im:
+            src_size = im.size
+    except (OSError, RuntimeError) as exc:
+        print(f"error: could not read {source}: {exc}", file=sys.stderr)
+        return EXIT_IO
+
+    plan = plan_fit(src_size, dst, args.fit, args.crop_anchor)
+    print(f"fitting {source.name}", file=sys.stderr)
+    print(plan.describe(), file=sys.stderr)
+    if args.dry_run:
+        print("dry run: nothing written", file=sys.stderr)
+        return EXIT_OK
+
+    try:
+        args.out.mkdir(parents=True, exist_ok=True)
+        dest = args.out / f"{source.stem}-{dst[0]}x{dst[1]}.{args.format}"
+        render(raw, plan, dest, blur_fill=not args.no_blur_fill)
+    except (OSError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_IO
+
+    print(f"wrote {dest} ({dst[0]}x{dst[1]})", file=sys.stderr)
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     dst = args.resolution
@@ -573,6 +623,9 @@ def main(argv: list[str] | None = None) -> int:
             summary = " ".join(first.split())[:90]
             print(f"  {name:<12} {summary}...")
         return EXIT_OK
+
+    if args.from_file:
+        return fit_existing(args, dst)
 
     try:
         prompt = load_prompt(args)
