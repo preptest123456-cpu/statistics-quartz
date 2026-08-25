@@ -56,6 +56,7 @@ import contextlib
 import dataclasses
 import datetime as _dt
 import html as _html
+import importlib
 import json
 import logging
 import os
@@ -1807,6 +1808,41 @@ class Archiver:
 # --------------------------------------------------------------------------------------
 
 
+SAC_PREFLIGHT_MODULES: Tuple[Tuple[str, str], ...] = (
+    ("lxml.etree", "lxml"),
+    ("charset_normalizer", "charset-normalizer"),
+)
+
+
+def preflight_compiled_dependencies(
+    importer: Callable[[str], Any] = importlib.import_module,
+) -> None:
+    """Fail early when Windows blocks a compiled dependency used by the archive."""
+    failures: List[Tuple[str, BaseException]] = []
+    for module, _label in SAC_PREFLIGHT_MODULES:
+        try:
+            importer(module)
+        except Exception as exc:  # noqa: BLE001 - any import failure must stop the archive
+            failures.append((module, exc))
+
+    if not failures:
+        return
+
+    details = "\n".join(f"  - {module}: {exc}" for module, exc in failures)
+    raise ArchiveError(
+        "Startup preflight failed; a compiled Python dependency could not load:\n"
+        f"{details}\n\n"
+        "On Windows, Smart App Control can block wheel .pyd files, especially in a "
+        "virtual environment created from a relocatable or bundled Python runtime. "
+        "Do not disable Smart App Control.\n\n"
+        "Temporary workaround for a trusted bundled runtime: recreate the environment "
+        "with `python -m venv --system-site-packages .venv`, or set "
+        "`include-system-site-packages = true` in `.venv\\pyvenv.cfg`, then rerun this "
+        "preflight. The durable fix is to use a standard user-installed CPython and "
+        "recreate `.venv`."
+    )
+
+
 def check_dependencies(strict: bool = False) -> bool:
     """Report which optional/required pieces are installed."""
     rows: List[Tuple[str, bool, str]] = []
@@ -1815,13 +1851,14 @@ def check_dependencies(strict: bool = False) -> bool:
         try:
             __import__(module)
             rows.append((label, True, ""))
-        except ImportError:
+        except (ImportError, OSError):
             rows.append((label, False, hint))
 
     probe("requests", "requests", "pip install requests")
     probe("playwright", "playwright", "pip install playwright && python -m playwright install chromium")
     probe("bs4", "beautifulsoup4", "pip install beautifulsoup4 lxml")
-    probe("lxml", "lxml", "pip install lxml")
+    probe("lxml.etree", "lxml", "pip install lxml")
+    probe("charset_normalizer", "charset-normalizer", "pip install charset-normalizer")
     probe("docx", "python-docx", "pip install python-docx")
     probe("PIL", "Pillow (image slicing)", "pip install Pillow")
     probe("tqdm", "tqdm (progress bars)", "pip install tqdm")
@@ -1960,6 +1997,13 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Config:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     cfg = parse_args(argv)
+
+    try:
+        preflight_compiled_dependencies()
+    except ArchiveError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
     cfg.root = resolve_output_root(cfg.out, cfg.folder_name)
     setup_logging(cfg.root / "archive.log", cfg.verbose)
 

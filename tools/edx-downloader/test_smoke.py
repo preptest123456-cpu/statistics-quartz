@@ -238,10 +238,74 @@ def test_misc() -> None:
     check("CLI default folder name", cfg.folder_name == ed.DEFAULT_FOLDER_NAME)
 
 
+def test_compiled_dependency_preflight() -> None:
+    print("\ncompiled dependency preflight")
+    imported: list[str] = []
+
+    def working_importer(module: str) -> object:
+        imported.append(module)
+        return object()
+
+    ed.preflight_compiled_dependencies(working_importer)
+    check("imports every compiled dependency",
+          imported == ["lxml.etree", "charset_normalizer"], str(imported))
+
+    attempted: list[str] = []
+
+    def sac_blocked_importer(module: str) -> object:
+        attempted.append(module)
+        if module == "lxml.etree":
+            raise ImportError(
+                "DLL load failed while importing etree: "
+                "An Application Control policy has blocked this file."
+            )
+        if module == "charset_normalizer":
+            raise ImportError(
+                "DLL load failed while importing md: "
+                "An Application Control policy has blocked this file."
+            )
+        return object()
+
+    try:
+        ed.preflight_compiled_dependencies(sac_blocked_importer)
+    except ed.ArchiveError as exc:
+        message = str(exc)
+        check("checks all dependencies after one failure",
+              attempted == ["lxml.etree", "charset_normalizer"], str(attempted))
+        check("explains Smart App Control", "Smart App Control" in message)
+        check("does not recommend disabling SAC", "Do not disable" in message)
+        check("shows the system-site-packages workaround",
+              "--system-site-packages" in message)
+        check("reports lxml failure", "lxml.etree" in message)
+        check("reports charset-normalizer failure", "charset_normalizer" in message)
+    else:
+        check("blocked imports fail before archiving", False, "ArchiveError was not raised")
+
+    original_preflight = ed.preflight_compiled_dependencies
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "must-not-be-created"
+
+        def fail_preflight() -> None:
+            raise ed.ArchiveError("simulated SAC block")
+
+        try:
+            ed.preflight_compiled_dependencies = fail_preflight
+            result = ed.main([
+                "--out", str(Path(tmp)),
+                "--folder-name", root.name,
+                "--dry-run",
+            ])
+        finally:
+            ed.preflight_compiled_dependencies = original_preflight
+        check("main exits on a failed preflight", result == 2, str(result))
+        check("preflight runs before output creation", not root.exists(), str(root))
+
+
 def main() -> int:
     print("edX course downloader -- offline smoke tests")
     for test in (test_sanitize, test_url_parsing, test_tree, test_video_selection,
-                 test_sjson, test_html_to_text, test_docx_build, test_manifest, test_misc):
+                 test_sjson, test_html_to_text, test_docx_build, test_manifest, test_misc,
+                 test_compiled_dependency_preflight):
         test()
     print("\n" + "-" * 60)
     if FAILURES:
