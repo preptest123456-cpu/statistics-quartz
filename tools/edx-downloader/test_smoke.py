@@ -476,10 +476,31 @@ def test_quartz_export() -> None:
               'section: "Week 1: Foundations"' in body.replace("'", "'"), body[:300])
         check("markdown body converted", "**emphasis**" in body)
         check("heading present", "### Background" in body)
-        check("image path rewritten to the archive", "/archive/images/diagram.png)" in body
-              or "../archive/images/diagram.png)" in body, body)
-        check("video linked", "Welcome.mp4" in body)
-        check("screenshot linked", "## Screenshot" in body)
+
+        # Images must be copied into the notes tree and referenced content-relatively,
+        # otherwise Quartz cannot serve them.
+        check("image path is content-relative",
+              "](assets/01-introduction/diagram.png)" in body, body)
+        check("image actually copied beside the note",
+              (section_dir / "assets" / "01-introduction" / "diagram.png").is_file(),
+              str(list((section_dir / "assets").rglob("*")) if (section_dir / "assets").exists()
+                  else "no assets dir"))
+        check("no path escapes the content root",
+              "../" not in body and "/mnt/" not in body.split("## Videos")[0], body)
+
+        check("video cited by name", "**Welcome.mp4**" in body)
+        check("video duration shown", "12:34" in body, body)
+        check("source files section", "## Source files" in body)
+        check("no unresolvable screenshot embed", "![" + unit.title not in body)
+
+        # With copying disabled the archive path is kept instead.
+        cfg_nocopy = ed.Config()
+        cfg_nocopy.quartz_copy_assets = False
+        out2 = tmpdir / "notes-nocopy"
+        ed.QuartzExporter(cfg_nocopy, tree, [capture]).export(out2)
+        body2 = (out2 / "01-week-1-foundations" / "01-introduction.md").read_text(encoding="utf-8")
+        check("--no-quartz-assets keeps the archive path",
+              "/archive/images/diagram.png)" in body2, body2)
 
 
 def main() -> int:

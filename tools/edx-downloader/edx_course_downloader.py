@@ -334,6 +334,7 @@ class Config:
     want_html: bool = True
     want_images: bool = True
     export_quartz: Optional[str] = None
+    quartz_copy_assets: bool = True
 
     video_workers: int = 3
     quality: str = "best"           # best | worst | <profile name>
@@ -1499,11 +1500,7 @@ class QuartzExporter:
         note = folder / f"{self._slug(block)}.md"
 
         body = html_to_markdown(capture.html) or capture.text
-
-        # Point image links at the copies inside the archive folder.
-        if capture.images:
-            relative = os.path.relpath(capture.directory, note.parent).replace(os.sep, "/")
-            body = body.replace("](images/", f"]({relative}/images/")
+        body = self._localise_images(folder, capture, body)
 
         parts = [
             self._frontmatter(block.title, {
@@ -1521,21 +1518,49 @@ class QuartzExporter:
             body,
         ]
 
+        # Videos and the screenshot stay in the archive folder -- they are far too
+        # large to copy into a notes tree. Cite them as paths rather than as links a
+        # browser cannot follow out of the site root.
         if capture.videos:
             parts += ["", "## Videos", ""]
             for video in capture.videos:
-                rel = os.path.relpath(video.path, note.parent).replace(os.sep, "/")
                 detail = human_duration(video.duration) if video.duration else ""
-                parts.append(f"- [{video.path.name}]({rel})" + (f" — {detail}" if detail else ""))
+                size = human_size(video.size) if video.size else ""
+                meta = " — ".join(x for x in (detail, size) if x)
+                parts.append(f"- **{video.path.name}**" + (f" — {meta}" if meta else ""))
+                parts.append(f"  `{video.path}`")
                 for lang, path in video.transcript_paths.items():
-                    trel = os.path.relpath(path, note.parent).replace(os.sep, "/")
-                    parts.append(f"  - [Transcript ({lang})]({trel})")
+                    parts.append(f"  - Transcript ({lang}): `{path}`")
 
         if capture.screenshot:
-            rel = os.path.relpath(capture.screenshot, note.parent).replace(os.sep, "/")
-            parts += ["", "## Screenshot", "", f"![{block.title}]({rel})"]
+            parts += ["", "## Source files", "",
+                      f"- Screenshot: `{capture.screenshot}`",
+                      f"- Archived page: `{capture.directory / 'unit.html'}`"]
 
         note.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+
+    def _localise_images(self, folder: Path, capture: UnitCapture, body: str) -> str:
+        """Copy the unit's images beside the note so the site can actually serve them.
+
+        Markdown links written by html_to_markdown point at ``images/NAME`` inside the
+        archive. Quartz only serves files under its content root, so a relative path
+        back into the archive would 404. Copy them in and rewrite to a content-relative
+        path instead.
+        """
+        if not capture.images:
+            return body
+
+        slug = self._slug(capture.block)
+        if not self.cfg.quartz_copy_assets:
+            # Leave the text readable even when copying is switched off.
+            return body.replace("](images/", f"]({capture.directory}/images/")
+
+        asset_dir = folder / "assets" / slug
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        for image in capture.images:
+            with contextlib.suppress(OSError):
+                shutil.copy2(image, asset_dir / image.name)
+        return body.replace("](images/", f"](assets/{slug}/")
 
     def _write_section_index(self, folder: Path, title: str, items: List[UnitCapture]) -> None:
         parts = [
@@ -2371,6 +2396,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Config:
                       help="Do not download images embedded in the course pages")
     what.add_argument("--export-quartz", metavar="DIR",
                       help="Also write the course out as Markdown notes for Quartz/Obsidian")
+    what.add_argument("--no-quartz-assets", action="store_true",
+                      help="Do not copy images into the exported notes (leaves archive paths)")
     what.add_argument("--only", metavar="REGEX",
                       help="Only archive sections/units whose title matches this regex")
     what.add_argument("--limit", type=int, help="Stop after N units (handy for a test run)")
@@ -2423,6 +2450,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Config:
         want_html=not args.no_html,
         want_images=not args.no_images,
         export_quartz=args.export_quartz,
+        quartz_copy_assets=not args.no_quartz_assets,
         video_workers=max(1, args.video_workers),
         quality=args.quality,
         screenshot_width=args.screenshot_width,

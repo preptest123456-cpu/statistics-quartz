@@ -199,8 +199,14 @@ Press Ctrl+C any time — progress is saved.
 You get one note per unit, an index per section, and a course index — all with
 Quartz frontmatter (`title`, `course`, `section`, `tags`) and `[[wikilinks]]`
 between them. Headings, lists, tables, bold/italic, links and images all survive
-the HTML-to-Markdown conversion. Images and videos are referenced by relative path
-back into the archive folder, so notes stay small and nothing is duplicated.
+the HTML-to-Markdown conversion.
+
+Inline images are **copied** into `assets/` beside each note and referenced with a
+content-relative path, because Quartz only serves files under its content root —
+a link back into the archive folder would 404. Videos and the full-page screenshots
+are far too large to duplicate into a notes tree, so they are cited as filesystem
+paths instead of links a browser cannot follow. Use `--no-quartz-assets` to skip
+copying and keep archive paths throughout.
 
 Pointed at this repo's `content/` directory, `npx quartz build --serve` renders the
 whole course as a browsable site. The same files open directly as an Obsidian vault.
