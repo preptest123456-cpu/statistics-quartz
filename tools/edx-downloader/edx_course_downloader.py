@@ -332,6 +332,8 @@ class Config:
     want_docx: bool = True
     want_transcripts: bool = True
     want_html: bool = True
+    want_images: bool = True
+    export_quartz: Optional[str] = None
 
     video_workers: int = 3
     quality: str = "best"           # best | worst | <profile name>
@@ -775,6 +777,7 @@ class UnitCapture:
     html: str = ""
     text: str = ""
     videos: List["VideoAsset"] = dataclasses.field(default_factory=list)
+    images: List[Path] = dataclasses.field(default_factory=list)
 
 
 class UnitRenderer:
@@ -1162,6 +1165,421 @@ def sjson_to_srt(payload: str) -> str:
 
 
 # --------------------------------------------------------------------------------------
+# Inline images
+# --------------------------------------------------------------------------------------
+
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"}
+
+CONTENT_TYPE_EXTENSION = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+    "image/bmp": ".bmp",
+    "image/avif": ".avif",
+}
+
+
+class AssetDownloader:
+    """Pulls the images a unit references and rewrites the HTML to point at local copies.
+
+    Runs against the saved ``unit.html``, so it also works on units captured by an
+    earlier run -- no need to re-screenshot anything.
+    """
+
+    def __init__(self, session: BrowserSession, cfg: Config, manifest: Manifest) -> None:
+        self.s = session
+        self.cfg = cfg
+        self.manifest = manifest
+        self.limiter = RateLimiter(cfg.rate_limit)
+
+    def harvest(self, capture: UnitCapture) -> int:
+        """Download every referenced image. Returns how many were saved."""
+        if not capture.html or BeautifulSoup is None:
+            return 0
+
+        key = capture.block.block_id
+        if not self.cfg.force and self.manifest.done(key, "images"):
+            existing = sorted((capture.directory / "images").glob("*"))
+            capture.images = [p for p in existing if p.is_file()]
+            return 0
+
+        soup = BeautifulSoup(capture.html, "lxml")
+        targets = self._collect(soup)
+        if not targets:
+            self.manifest.record(key, "images", count=0)
+            return 0
+
+        image_dir = capture.directory / "images"
+        image_dir.mkdir(parents=True, exist_ok=True)
+
+        saved = 0
+        used_names: Dict[str, int] = {}
+        for tag, attr, url in targets:
+            local = self._fetch(url, image_dir, used_names)
+            if local is None:
+                continue
+            tag[attr] = f"images/{local.name}"
+            capture.images.append(local)
+            saved += 1
+
+        if saved:
+            capture.html = str(soup)
+            if capture.html_path:
+                capture.html_path.write_text(
+                    f"<!doctype html><meta charset='utf-8'>"
+                    f"<title>{_html.escape(capture.block.title)}</title>\n{capture.html}",
+                    encoding="utf-8",
+                )
+            LOG.info("      + %d image(s)", saved)
+
+        self.manifest.record(key, "images", count=saved)
+        return saved
+
+    # ---- helpers ----------------------------------------------------------------
+    def _collect(self, soup: Any) -> List[Tuple[Any, str, str]]:
+        """Find every image reference worth downloading."""
+        found: List[Tuple[Any, str, str]] = []
+        seen: set = set()
+
+        def add(tag: Any, attr: str, raw: str) -> None:
+            if not raw or raw.startswith("data:"):
+                return                      # already inline
+            absolute = urljoin(self.cfg.lms_base, raw)
+            if not absolute.startswith(("http://", "https://")):
+                return
+            if absolute in seen:
+                return
+            seen.add(absolute)
+            found.append((tag, attr, absolute))
+
+        for img in soup.find_all("img"):
+            src = img.get("src") or img.get("data-src") or ""
+            add(img, "src", src)
+
+        # Links that point straight at an image (diagrams, figures, charts).
+        for anchor in soup.find_all("a"):
+            href = anchor.get("href") or ""
+            if Path(urlparse(href).path).suffix.lower() in IMAGE_EXTENSIONS:
+                add(anchor, "href", href)
+
+        return found
+
+    def _fetch(self, url: str, image_dir: Path, used_names: Dict[str, int]) -> Optional[Path]:
+        try:
+            self.limiter.wait()
+            resp = self.s.http.get(url, timeout=60)
+            if resp.status_code != 200 or not resp.content:
+                LOG.debug("      image %s -> HTTP %s", url, resp.status_code)
+                return None
+
+            name = self._filename(url, resp.headers.get("Content-Type", ""), used_names)
+            path = image_dir / name
+            path.write_bytes(resp.content)
+            return path
+        except Exception as exc:  # noqa: BLE001 - one bad image must not stop the archive
+            LOG.debug("      image %s failed: %s", url, exc)
+            return None
+
+    def _filename(self, url: str, content_type: str, used_names: Dict[str, int]) -> str:
+        raw = Path(urlparse(url).path).name or "image"
+        stem, suffix = os.path.splitext(raw)
+        suffix = suffix.lower()
+
+        if suffix not in IMAGE_EXTENSIONS:
+            suffix = CONTENT_TYPE_EXTENSION.get(content_type.split(";")[0].strip(), ".png")
+
+        stem = sanitize_component(stem, maxlen=60) or "image"
+        candidate = f"{stem}{suffix}"
+
+        count = used_names.get(candidate, 0)
+        used_names[candidate] = count + 1
+        if count:
+            candidate = f"{stem}-{count + 1}{suffix}"
+        return candidate
+
+
+# --------------------------------------------------------------------------------------
+# Markdown / Quartz export
+# --------------------------------------------------------------------------------------
+
+
+def html_to_markdown(fragment: str) -> str:
+    """Convert a unit's HTML into Markdown suitable for Quartz or Obsidian."""
+    if not fragment:
+        return ""
+    if BeautifulSoup is None:
+        return html_to_text(fragment)
+
+    soup = BeautifulSoup(fragment, "lxml")
+    for junk in soup.select("script, style, noscript, button, .sr, .sr-only"):
+        junk.decompose()
+
+    def inline(node: Any) -> str:
+        if isinstance(node, NavigableString):
+            return re.sub(r"\s+", " ", str(node))
+        if not isinstance(node, Tag):
+            return ""
+        name = (node.name or "").lower()
+        inner = "".join(inline(c) for c in node.children)
+
+        if name in {"strong", "b"}:
+            return f"**{inner.strip()}**" if inner.strip() else ""
+        if name in {"em", "i"}:
+            return f"*{inner.strip()}*" if inner.strip() else ""
+        if name == "code":
+            return f"`{inner.strip()}`" if inner.strip() else ""
+        if name == "br":
+            return "\n"
+        if name == "a":
+            href = node.get("href", "")
+            text = inner.strip() or href
+            return f"[{text}]({href})" if href else text
+        if name == "img":
+            src = node.get("src", "")
+            alt = (node.get("alt") or "").replace("]", "")
+            return f"\n\n![{alt}]({src})\n\n" if src else ""
+        return inner
+
+    lines: List[str] = []
+
+    def block(node: Any, depth: int = 0) -> None:
+        if isinstance(node, NavigableString):
+            text = str(node).strip()
+            if text:
+                lines.append(text)
+            return
+        if not isinstance(node, Tag):
+            return
+
+        name = (node.name or "").lower()
+
+        if name in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            text = node.get_text(" ", strip=True)
+            if text:
+                level = min(6, int(name[1]) + 1)   # page title owns h1
+                lines.append(f"\n{'#' * level} {text}\n")
+            return
+
+        if name in {"p", "div", "section", "article"}:
+            if node.find(["p", "ul", "ol", "table", "h1", "h2", "h3", "h4", "div", "blockquote"]):
+                for child in node.children:
+                    block(child, depth)
+                return
+            text = "".join(inline(c) for c in node.children).strip()
+            if text:
+                lines.append(f"\n{text}\n")
+            return
+
+        if name in {"ul", "ol"}:
+            ordered = name == "ol"
+            for i, item in enumerate(node.find_all("li", recursive=False), start=1):
+                nested = item.find_all(["ul", "ol"], recursive=False)
+                for tag in nested:
+                    tag.extract()
+                text = "".join(inline(c) for c in item.children).strip()
+                bullet = f"{i}." if ordered else "-"
+                lines.append(f"{'  ' * depth}{bullet} {text}")
+                for tag in nested:
+                    block(tag, depth + 1)
+            lines.append("")
+            return
+
+        if name == "blockquote":
+            text = node.get_text(" ", strip=True)
+            if text:
+                lines.append(f"\n> {text}\n")
+            return
+
+        if name == "pre":
+            text = node.get_text()
+            if text.strip():
+                lines.append(f"\n```\n{text.rstrip()}\n```\n")
+            return
+
+        if name == "table":
+            rows = node.find_all("tr")
+            if not rows:
+                return
+            lines.append("")
+            for index, row in enumerate(rows):
+                cells = [c.get_text(" ", strip=True).replace("|", "\\|")
+                         for c in row.find_all(["td", "th"])]
+                if not cells:
+                    continue
+                lines.append("| " + " | ".join(cells) + " |")
+                if index == 0:
+                    lines.append("|" + "|".join(" --- " for _ in cells) + "|")
+            lines.append("")
+            return
+
+        if name == "img":
+            rendered = inline(node).strip()
+            if rendered:
+                lines.append(rendered)
+            return
+
+        if name == "hr":
+            lines.append("\n---\n")
+            return
+
+        for child in node.children:
+            block(child, depth)
+
+    root = soup.body or soup
+    for child in root.children:
+        block(child)
+
+    text = "\n".join(lines)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+class QuartzExporter:
+    """Writes the archive out as Markdown notes for Quartz (or Obsidian)."""
+
+    def __init__(self, cfg: Config, course: Block, captures: List[UnitCapture]) -> None:
+        self.cfg = cfg
+        self.course = course
+        self.captures = captures
+
+    def export(self, target: Path) -> Path:
+        target.mkdir(parents=True, exist_ok=True)
+        LOG.info("Exporting Markdown notes to %s", target)
+
+        sections: Dict[str, List[UnitCapture]] = {}
+        section_titles: Dict[str, str] = {}
+
+        for capture in self.captures:
+            sequential = capture.block.parent
+            chapter = sequential.parent if sequential else None
+            if chapter is None:
+                continue
+            slug = self._slug(chapter)
+            sections.setdefault(slug, []).append(capture)
+            section_titles[slug] = chapter.title
+
+        for slug, items in sections.items():
+            folder = target / slug
+            folder.mkdir(parents=True, exist_ok=True)
+            for capture in items:
+                self._write_unit(folder, capture)
+            self._write_section_index(folder, section_titles[slug], items)
+
+        self._write_course_index(target, sections, section_titles)
+        LOG.info("Markdown export complete: %d sections, %d notes",
+                 len(sections), len(self.captures))
+        return target
+
+    # ---- pieces ------------------------------------------------------------------
+    def _slug(self, block: Block) -> str:
+        text = unicodedata.normalize("NFKD", f"{block.index:02d}-{block.title}")
+        text = text.encode("ascii", "ignore").decode()
+        text = re.sub(r"[^\w\s-]", "", text).strip().lower()
+        return re.sub(r"[\s_]+", "-", text)[:70] or f"block-{block.index:02d}"
+
+    def _frontmatter(self, title: str, extra: Dict[str, Any]) -> str:
+        def quote(value: Any) -> str:
+            return '"' + str(value).replace('"', "'") + '"'
+
+        lines = ["---", f"title: {quote(title)}"]
+        for key, value in extra.items():
+            if isinstance(value, list):
+                lines.append(f"{key}:")
+                lines.extend(f"  - {quote(v)}" for v in value)
+            elif value not in (None, ""):
+                lines.append(f"{key}: {quote(value)}")
+        lines.append("---")
+        return "\n".join(lines)
+
+    def _write_unit(self, folder: Path, capture: UnitCapture) -> None:
+        block = capture.block
+        note = folder / f"{self._slug(block)}.md"
+
+        body = html_to_markdown(capture.html) or capture.text
+
+        # Point image links at the copies inside the archive folder.
+        if capture.images:
+            relative = os.path.relpath(capture.directory, note.parent).replace(os.sep, "/")
+            body = body.replace("](images/", f"]({relative}/images/")
+
+        parts = [
+            self._frontmatter(block.title, {
+                "course": self.course.title,
+                "section": block.parent.parent.title if block.parent and block.parent.parent else "",
+                "subsection": block.parent.title if block.parent else "",
+                "archived": _dt.datetime.now().strftime("%Y-%m-%d"),
+                "tags": ["edx", "course-archive"],
+            }),
+            "",
+            f"# {block.title}",
+            "",
+            f"*{block.breadcrumb()}*",
+            "",
+            body,
+        ]
+
+        if capture.videos:
+            parts += ["", "## Videos", ""]
+            for video in capture.videos:
+                rel = os.path.relpath(video.path, note.parent).replace(os.sep, "/")
+                detail = human_duration(video.duration) if video.duration else ""
+                parts.append(f"- [{video.path.name}]({rel})" + (f" — {detail}" if detail else ""))
+                for lang, path in video.transcript_paths.items():
+                    trel = os.path.relpath(path, note.parent).replace(os.sep, "/")
+                    parts.append(f"  - [Transcript ({lang})]({trel})")
+
+        if capture.screenshot:
+            rel = os.path.relpath(capture.screenshot, note.parent).replace(os.sep, "/")
+            parts += ["", "## Screenshot", "", f"![{block.title}]({rel})"]
+
+        note.write_text("\n".join(parts).rstrip() + "\n", encoding="utf-8")
+
+    def _write_section_index(self, folder: Path, title: str, items: List[UnitCapture]) -> None:
+        parts = [
+            self._frontmatter(title, {
+                "course": self.course.title,
+                "tags": ["edx", "course-archive", "section"],
+            }),
+            "",
+            f"# {title}",
+            "",
+        ]
+        for capture in items:
+            parts.append(f"- [[{self._slug(capture.block)}|{capture.block.title}]]")
+        (folder / "index.md").write_text("\n".join(parts) + "\n", encoding="utf-8")
+
+    def _write_course_index(
+        self, target: Path, sections: Dict[str, List[UnitCapture]], titles: Dict[str, str]
+    ) -> None:
+        total_videos = sum(len(c.videos) for c in self.captures)
+        parts = [
+            self._frontmatter(self.course.title, {
+                "course_id": self.cfg.course_id,
+                "archived": _dt.datetime.now().strftime("%Y-%m-%d"),
+                "tags": ["edx", "course-archive", "index"],
+            }),
+            "",
+            f"# {self.course.title}",
+            "",
+            f"Archived {_dt.datetime.now().strftime('%d %B %Y')} — "
+            f"{len(sections)} sections, {len(self.captures)} units, {total_videos} videos.",
+            "",
+            "## Contents",
+            "",
+        ]
+        for slug, items in sections.items():
+            parts.append(f"### [[{slug}/index|{titles[slug]}]]")
+            parts.append("")
+            for capture in items:
+                parts.append(f"- [[{slug}/{self._slug(capture.block)}|{capture.block.title}]]")
+            parts.append("")
+        (target / "index.md").write_text("\n".join(parts) + "\n", encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------------
 # Word document
 # --------------------------------------------------------------------------------------
 
@@ -1531,6 +1949,7 @@ class Stats:
     subsections: int = 0
     units: int = 0
     screenshots: int = 0
+    images: int = 0
     videos_ok: int = 0
     videos_failed: int = 0
     videos_skipped: int = 0
@@ -1552,6 +1971,7 @@ class Archiver:
         self.manifest = Manifest(cfg.root / "manifest.json")
         self.renderer = UnitRenderer(self.session, cfg)
         self.videos = VideoDownloader(self.session, cfg, self.manifest)
+        self.assets = AssetDownloader(self.session, cfg, self.manifest)
         self.captures: List[UnitCapture] = []
         self._interrupted = False
 
@@ -1580,6 +2000,9 @@ class Archiver:
 
             if cfg.want_docx:
                 self._build_docx(course)
+
+            if cfg.export_quartz and self.captures:
+                self._export_markdown(course)
         finally:
             self.manifest.save()
             self.session.close()
@@ -1717,6 +2140,13 @@ class Archiver:
         if capture.screenshot and capture.screenshot.is_file():
             self.stats.screenshots += 1
 
+        if cfg.want_images:
+            try:
+                self.assets.harvest(capture)
+            except Exception as exc:  # noqa: BLE001 - images are a bonus, never fatal
+                LOG.warning("      ! images failed for %s: %s", vertical.title, exc)
+            self.stats.images += len(capture.images)
+
         if cfg.want_videos:
             for video_block in vertical.descendants_of_type(VIDEO_TYPES):
                 asset = self.videos.resolve(video_block, directory)
@@ -1786,6 +2216,13 @@ class Archiver:
         target = builder.save(self.cfg.root / "course.docx")
         LOG.info("Word document: %s (%s)", target, human_size(target.stat().st_size))
 
+    def _export_markdown(self, course: Block) -> None:
+        target = Path(os.path.expandvars(str(self.cfg.export_quartz))).expanduser()
+        try:
+            QuartzExporter(self.cfg, course, self.captures).export(target)
+        except Exception as exc:  # noqa: BLE001 - the archive itself is already safe
+            LOG.error("Markdown export failed: %s", exc)
+
     def _summarise(self) -> None:
         s = self.stats
         LOG.info("")
@@ -1795,6 +2232,7 @@ class Archiver:
         LOG.info("  subsections  : %d", s.subsections)
         LOG.info("  units        : %d", s.units)
         LOG.info("  screenshots  : %d", s.screenshots)
+        LOG.info("  images       : %d", s.images)
         LOG.info("  videos       : %d ok, %d failed, %d without a download source",
                  s.videos_ok, s.videos_failed, s.videos_skipped)
         LOG.info("  transcripts  : %d", s.transcripts)
@@ -1929,6 +2367,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Config:
     what.add_argument("--no-docx", action="store_true", help="Skip the Word document")
     what.add_argument("--no-transcripts", action="store_true", help="Skip subtitle files")
     what.add_argument("--no-html", action="store_true", help="Do not save per-unit unit.html")
+    what.add_argument("--no-images", action="store_true",
+                      help="Do not download images embedded in the course pages")
+    what.add_argument("--export-quartz", metavar="DIR",
+                      help="Also write the course out as Markdown notes for Quartz/Obsidian")
     what.add_argument("--only", metavar="REGEX",
                       help="Only archive sections/units whose title matches this regex")
     what.add_argument("--limit", type=int, help="Stop after N units (handy for a test run)")
@@ -1979,6 +2421,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> Config:
         want_docx=not args.no_docx,
         want_transcripts=not args.no_transcripts,
         want_html=not args.no_html,
+        want_images=not args.no_images,
+        export_quartz=args.export_quartz,
         video_workers=max(1, args.video_workers),
         quality=args.quality,
         screenshot_width=args.screenshot_width,

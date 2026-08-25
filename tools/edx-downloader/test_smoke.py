@@ -301,11 +301,193 @@ def test_compiled_dependency_preflight() -> None:
         check("preflight runs before output creation", not root.exists(), str(root))
 
 
+def test_html_to_markdown() -> None:
+    print("\nhtml_to_markdown")
+    md = ed.html_to_markdown(
+        "<div><h2>Key ideas</h2>"
+        "<p>Some <strong>bold</strong> and <em>italic</em> with a "
+        "<a href='https://example.invalid/p'>link</a>.</p>"
+        "<ul><li>First</li><li>Second</li></ul>"
+        "<table><tr><th>Year</th><th>Event</th></tr><tr><td>1972</td><td>Visit</td></tr></table>"
+        "<blockquote>A quotation.</blockquote>"
+        "<img src='images/diagram.png' alt='Diagram'>"
+        "</div>"
+    )
+    check("heading demoted below the page title", "### Key ideas" in md, md[:60])
+    check("bold preserved", "**bold**" in md)
+    check("italic preserved", "*italic*" in md)
+    check("link converted", "[link](https://example.invalid/p)" in md)
+    check("bullets converted", "- First" in md and "- Second" in md)
+    check("table header separator", "| --- | --- |" in md, md)
+    check("table row", "| 1972 | Visit |" in md)
+    check("blockquote converted", "> A quotation." in md)
+    check("image converted", "![Diagram](images/diagram.png)" in md)
+    check("no raw tags left", "<" not in md.replace("\\<", ""), md)
+
+
+class _FakeResponse:
+    def __init__(self, content: bytes, status: int = 200, ctype: str = "image/png") -> None:
+        self.content = content
+        self.status_code = status
+        self.headers = {"Content-Type": ctype}
+
+
+class _FakeHttp:
+    """Stands in for requests.Session -- records what was asked for."""
+
+    def __init__(self, responses: dict) -> None:
+        self.responses = responses
+        self.requested: list = []
+
+    def get(self, url: str, **_kw: object) -> _FakeResponse:
+        self.requested.append(url)
+        return self.responses.get(url, _FakeResponse(b"", status=404))
+
+
+def _make_asset_downloader(http: _FakeHttp, cfg: "ed.Config") -> "ed.AssetDownloader":
+    downloader = ed.AssetDownloader.__new__(ed.AssetDownloader)
+    downloader.cfg = cfg
+    downloader.s = type("S", (), {"http": http})()
+    downloader.limiter = ed.RateLimiter(0)
+    return downloader
+
+
+def test_image_harvest() -> None:
+    print("\nAssetDownloader")
+    png = bytes.fromhex("89504e470d0a1a0a") + b"fake-png-body"
+    urls = {
+        "https://courses.edx.org/asset-v1/diagram.png": _FakeResponse(png),
+        "https://cdn.example.invalid/photo.JPG": _FakeResponse(png, ctype="image/jpeg"),
+        "https://cdn.example.invalid/chart": _FakeResponse(png, ctype="image/png"),
+    }
+    http = _FakeHttp(urls)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        cfg = ed.Config()
+        manifest = ed.Manifest(tmpdir / "manifest.json")
+        downloader = _make_asset_downloader(http, cfg)
+        downloader.manifest = manifest
+
+        unit = ed.Block(block_id="vert@1", block_type="vertical", display_name="Intro")
+        capture = ed.UnitCapture(block=unit, directory=tmpdir)
+        capture.html_path = tmpdir / "unit.html"
+        capture.html = (
+            "<div>"
+            "<img src='/asset-v1/diagram.png' alt='Diagram'>"          # relative -> absolute
+            "<img src='https://cdn.example.invalid/photo.JPG'>"
+            "<img src='data:image/png;base64,AAAA'>"                    # inline, skip
+            "<a href='https://cdn.example.invalid/chart'>chart</a>"     # not an image link
+            "<img src='https://cdn.example.invalid/missing.png'>"       # 404
+            "</div>"
+        )
+        capture.html_path.write_text(capture.html, encoding="utf-8")
+
+        saved = downloader.harvest(capture)
+
+        check("downloads the reachable images", saved == 2, f"saved={saved}")
+        check("relative URL resolved against the LMS",
+              "https://courses.edx.org/asset-v1/diagram.png" in http.requested)
+        check("data: URI skipped",
+              not any(u.startswith("data:") for u in http.requested))
+        check("non-image link skipped",
+              "https://cdn.example.invalid/chart" not in http.requested)
+        check("files written to images/",
+              len(list((tmpdir / "images").glob("*"))) == 2,
+              str(sorted(p.name for p in (tmpdir / "images").glob("*"))))
+        check("extension normalised from the URL",
+              (tmpdir / "images" / "photo.JPG").exists()
+              or (tmpdir / "images" / "photo.jpg").exists(),
+              str(sorted(p.name for p in (tmpdir / "images").glob("*"))))
+
+        rewritten = capture.html_path.read_text(encoding="utf-8")
+        check("html rewritten to local paths", 'src="images/' in rewritten, rewritten[:200])
+        check("404 image left untouched", "missing.png" in rewritten)
+        check("manifest records the count", manifest.done("vert@1", "images"))
+
+        # Second pass must not re-download.
+        http.requested.clear()
+        again = downloader.harvest(capture)
+        check("second run skips already-harvested units",
+              again == 0 and not http.requested, f"again={again} {http.requested}")
+
+
+def test_filename_derivation() -> None:
+    print("\nAssetDownloader._filename")
+    downloader = _make_asset_downloader(_FakeHttp({}), ed.Config())
+    used: dict = {}
+    check("extension kept from URL",
+          downloader._filename("https://x.invalid/a/pic.png", "image/png", used) == "pic.png")
+    check("extension inferred from content type",
+          downloader._filename("https://x.invalid/a/chart", "image/jpeg", used) == "chart.jpg")
+    first = downloader._filename("https://x.invalid/b/pic.png", "image/png", used)
+    check("duplicate names get a suffix", first == "pic-2.png", first)
+    check("query strings do not leak into the name",
+          "?" not in downloader._filename("https://x.invalid/c/i.png?v=3", "image/png", used))
+
+
+def test_quartz_export() -> None:
+    print("\nQuartzExporter")
+    tree = sample_tree()
+    chapter = tree.children[0]
+    sequential = chapter.children[0]
+    unit = sequential.children[0]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmpdir = Path(tmp)
+        archive = tmpdir / "archive"
+        archive.mkdir()
+        (archive / "images").mkdir()
+        (archive / "images" / "diagram.png").write_bytes(b"x")
+
+        cfg = ed.Config()
+        capture = ed.UnitCapture(block=unit, directory=archive)
+        capture.html = ("<h2>Background</h2><p>Text with <strong>emphasis</strong>.</p>"
+                        "<img src='images/diagram.png' alt='Diagram'>")
+        capture.screenshot = archive / "unit.png"
+        capture.screenshot.write_bytes(b"x")
+        capture.images = [archive / "images" / "diagram.png"]
+        video = ed.VideoAsset(block=unit, url="https://x.invalid/v.mp4", profile="desktop_mp4",
+                              path=archive / "Welcome.mp4", duration=754.0)
+        capture.videos = [video]
+
+        out = tmpdir / "notes"
+        ed.QuartzExporter(cfg, tree, [capture]).export(out)
+
+        index = out / "index.md"
+        check("course index written", index.is_file())
+        index_text = index.read_text(encoding="utf-8")
+        check("index has frontmatter", index_text.startswith("---\ntitle:"), index_text[:40])
+        check("index counts the units", "1 units" in index_text)
+        check("index wikilinks the section", "[[01-week-1-foundations/index|" in index_text,
+              index_text)
+
+        section_dir = out / "01-week-1-foundations"
+        check("section folder slugged", section_dir.is_dir(),
+              str([p.name for p in out.iterdir()]))
+        check("section index written", (section_dir / "index.md").is_file())
+
+        note = section_dir / "01-introduction.md"
+        check("unit note written", note.is_file(),
+              str([p.name for p in section_dir.iterdir()]))
+        body = note.read_text(encoding="utf-8")
+        check("note frontmatter carries the course", 'course: "China-West Relations"' in body)
+        check("note frontmatter carries the section",
+              'section: "Week 1: Foundations"' in body.replace("'", "'"), body[:300])
+        check("markdown body converted", "**emphasis**" in body)
+        check("heading present", "### Background" in body)
+        check("image path rewritten to the archive", "/archive/images/diagram.png)" in body
+              or "../archive/images/diagram.png)" in body, body)
+        check("video linked", "Welcome.mp4" in body)
+        check("screenshot linked", "## Screenshot" in body)
+
+
 def main() -> int:
     print("edX course downloader -- offline smoke tests")
     for test in (test_sanitize, test_url_parsing, test_tree, test_video_selection,
                  test_sjson, test_html_to_text, test_docx_build, test_manifest, test_misc,
-                 test_compiled_dependency_preflight):
+                 test_compiled_dependency_preflight, test_html_to_markdown,
+                 test_image_harvest, test_filename_derivation, test_quartz_export):
         test()
     print("\n" + "-" * 60)
     if FAILURES:

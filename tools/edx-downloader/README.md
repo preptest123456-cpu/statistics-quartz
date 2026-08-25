@@ -4,6 +4,8 @@ Downloads an edX course **you are enrolled in** into a local folder — by defau
 inside your OneDrive folder, so it syncs to the cloud — capturing:
 
 - **Screenshots** — a full-page PNG of every unit, exactly as it looks on edX
+- **Images** — every picture embedded in the page, saved locally, with `unit.html`
+  rewritten to point at the local copies so it still renders after your access ends
 - **Text** — every unit's content, saved as `unit.txt` / `unit.html`
 - **Videos** — the best MP4 edX offers (HLS is remuxed with ffmpeg)
 - **Transcripts** — subtitle files (`.srt`) for each video
@@ -153,7 +155,8 @@ edex_China-West Relations - Dilemmas and Lessons/
 | `--folder-name NAME` | Rename the course folder |
 | `--only REGEX` | Only sections/units whose title matches, e.g. `--only "Week [12]"` |
 | `--limit N` | Stop after N units |
-| `--no-videos` / `--no-screenshots` / `--no-docx` / `--no-transcripts` | Skip a stage |
+| `--no-videos` / `--no-screenshots` / `--no-docx` / `--no-transcripts` / `--no-images` | Skip a stage |
+| `--export-quartz DIR` | Also write Markdown notes for Quartz or Obsidian |
 | `--quality` | `best` (default), `worst`, or a profile like `desktop_mp4`, `mobile_low` |
 | `--video-workers N` | Parallel video downloads (default 3) |
 | `--screenshot-mode mfe` | Screenshot the full course page instead of just the unit content |
@@ -184,6 +187,23 @@ edex_China-West Relations - Dilemmas and Lessons/
 Everything is **resumable**: state lives in `manifest.json`, and re-running the
 same command picks up where it stopped (partial video downloads resume mid-file).
 Press Ctrl+C any time — progress is saved.
+
+## Publishing to Quartz or Obsidian
+
+`--export-quartz` writes the archive a second time as Markdown notes:
+
+```bash
+./run_archive.sh --skip-install -- --export-quartz ../../content/china-west-relations
+```
+
+You get one note per unit, an index per section, and a course index — all with
+Quartz frontmatter (`title`, `course`, `section`, `tags`) and `[[wikilinks]]`
+between them. Headings, lists, tables, bold/italic, links and images all survive
+the HTML-to-Markdown conversion. Images and videos are referenced by relative path
+back into the archive folder, so notes stay small and nothing is duplicated.
+
+Pointed at this repo's `content/` directory, `npx quartz build --serve` renders the
+whole course as a browsable site. The same files open directly as an Obsidian vault.
 
 ## Troubleshooting
 
