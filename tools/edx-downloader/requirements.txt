@@ -1,0 +1,14 @@
+# Core (required)
+requests>=2.31
+playwright>=1.44          # after installing: python -m playwright install chromium
+
+# Content extraction + Word output (strongly recommended)
+beautifulsoup4>=4.12
+lxml>=5.0
+python-docx>=1.1
+Pillow>=10.0              # slices very tall screenshots so they stay readable
+
+# Nice to have
+tqdm>=4.66                # download progress bars
+browser-cookie3>=0.19     # only needed for --cookies-from-browser
+yt-dlp>=2024.4.9          # fallback for HLS-only videos if ffmpeg is missing
