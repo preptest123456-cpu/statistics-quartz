@@ -63,7 +63,39 @@ If PowerShell blocks the script, allow it for that one session:
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
-Everything below is the manual equivalent, and applies to macOS and Linux too.
+Everything below is the manual equivalent.
+
+## Quick start (Linux, WSL or macOS)
+
+`run_archive.sh` is the same thing for a shell:
+
+```bash
+cd tools/edx-downloader
+./run_archive.sh
+```
+
+Under WSL it detects your Windows username and defaults to
+`/mnt/c/Users/<you>/Downloads/Learning/...`, then opens the folder in Explorer
+when it finishes. Options are passed straight through:
+
+```bash
+./run_archive.sh --no-videos --limit 3
+./run_archive.sh --dry-run
+./run_archive.sh --out ~/archive --folder-name kcl-china
+./run_archive.sh --skip-install          # later runs
+```
+
+First-time WSL setup, if you haven't got these already:
+
+```bash
+sudo apt update && sudo apt install -y python3-venv ffmpeg
+```
+
+Two WSL-specific notes: signing in needs a visible browser window, which WSLg
+provides on Windows 11 (`wsl --update` if Chromium won't open); and writing to
+`/mnt/c` is slower than the Linux filesystem, so archive to `~` and copy
+afterwards if it drags.
+
 
 ## Use
 
