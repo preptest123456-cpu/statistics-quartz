@@ -35,6 +35,36 @@ published as HLS streams and need it. Check everything at once:
 python edx_course_downloader.py --check
 ```
 
+## Quick start (Windows, one command)
+
+`run_archive.ps1` does the whole thing: creates the virtual environment, installs
+the dependencies and Chromium, prompts you to sign in if needed, then archives the
+course and opens the folder when it's done.
+
+```powershell
+cd tools\edx-downloader
+.\run_archive.ps1
+```
+
+Re-running is safe — the archive resumes and skips whatever is already downloaded.
+
+| Switch | |
+| --- | --- |
+| `-NoVideos` | Text and screenshots only |
+| `-Limit 3` | Stop after 3 units (quick test) |
+| `-DryRun` | Print the outline, download nothing |
+| `-Force` | Re-capture and re-download everything |
+| `-SkipInstall` | Skip the dependency step on later runs |
+| `-Out` / `-FolderName` / `-CourseId` | Override the destination or course |
+
+If PowerShell blocks the script, allow it for that one session:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+Everything below is the manual equivalent, and applies to macOS and Linux too.
+
 ## Use
 
 **1. Sign in once.** A real Chromium window opens; log in to edX there (SSO and
