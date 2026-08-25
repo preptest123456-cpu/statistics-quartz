@@ -79,6 +79,8 @@ while [[ $# -gt 0 ]]; do
         --course-id)    COURSE_ID="$2"; shift 2 ;;
         --skip-install) SKIP_INSTALL=1; shift ;;
         -h|--help)      usage ;;
+        # A bare "--" ends this script's own options; the rest goes to the archiver.
+        --)             shift; PASSTHROUGH+=("$@"); break ;;
         # Everything else is handed straight to the Python archiver.
         *)              PASSTHROUGH+=("$1"); shift ;;
     esac
