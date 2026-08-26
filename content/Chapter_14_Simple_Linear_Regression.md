@@ -1,4 +1,23 @@
+---
+title: "Chapter 14: Simple Linear Regression"
+chapter: 14
+tags:
+  - statistics
+  - regression
+  - simple-linear-regression
+  - least-squares
+  - coefficient-of-determination
+  - residual-analysis
+  - correlation
+---
+
 # Simple Linear Regression
+
+> [!tip] Companion Jupyter notebook
+> Work the Armand's Pizza Parlors example interactively. The data is inline, so there is nothing to
+> download and no setup — Colab runs it in the browser.
+>
+> **[▶ Run in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb)** · [View on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb) · [Download `.ipynb`](https://raw.githubusercontent.com/preptest123456-cpu/statistics-jupyter/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb)
 
 ## Statistics in Practice: Alliance Data Systems
 

@@ -1,4 +1,23 @@
+---
+title: "Chapter 15: Multiple Regression"
+chapter: 15
+tags:
+  - statistics
+  - regression
+  - multiple-regression
+  - multicollinearity
+  - dummy-variables
+  - logistic-regression
+  - residual-analysis
+---
+
 # Multiple Regression
+
+> [!tip] Companion Jupyter notebook
+> Work the Butler Trucking example interactively. The data is inline, so there is nothing to
+> download and no setup — Colab runs it in the browser.
+>
+> **[▶ Run in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb)** · [View on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) · [Download `.ipynb`](https://raw.githubusercontent.com/preptest123456-cpu/statistics-jupyter/main/notebooks/Chapter_15_Multiple_Regression.ipynb)
 
 ## Statistics in Practice: dunnhumby
 
@@ -362,7 +381,12 @@ $$E(y) = P(y = 1 | x) = \frac{e^{-7+3x}}{1 + e^{-7+3x}} \tag{15.29}$$
 
 Figure 15.12 shows a graph of equation (15.29). Note that the graph is S-shaped. The value of E(y) ranges from 0 to 1, with the value of E(y) gradually approaching 1 as the value of x becomes larger and the value of E(y) approaching 0 as the value of x becomes smaller. Note also that the values of E(y), representing probability, increase fairly rapidly as x increases from 2 to 3. The fact that the values of E(y) range from 0 to 1 and that the curve is S-shaped makes equation (15.29) ideally suited to model the probability the dependent variable is equal to 1.
 
-![[Figure 15.12 - S-shaped logistic curve showing E(y) vs Independent Variable (x), with E(y) ranging from 0 to 1.0 on y-axis and x ranging from 0 to 5 on x-axis]]
+> [!info] Figure 15.12 — Logistic regression curve
+> An S-shaped (sigmoid) curve of $E(y)$ against the independent variable $x$.
+> $E(y)$ ranges from 0 to 1.0 on the y-axis while $x$ ranges from 0 to 5 on the x-axis,
+> rising steeply between $x = 2$ and $x = 3$.
+>
+> *Figure not included in this vault; the description above is retained from the source text.*
 
 **FIGURE 15.12** LOGISTIC REGRESSION EQUATION FOR β₀ = −7 AND β₁ = 3
 

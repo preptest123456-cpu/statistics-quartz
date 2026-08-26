@@ -15,6 +15,9 @@
     "quartz": "./quartz/bootstrap-cli.mjs",
     "docs": "npx quartz build --serve -d docs",
     "check": "tsc --noEmit && npx prettier . --check",
+    "check:links": "node scripts/check-links.mjs",
+    "glossary": "node scripts/build-glossary.mjs",
+    "verify": "npx quartz build && npm run check:links",
     "format": "npx prettier . --write",
     "test": "tsx --test",
     "profile": "0x -D prof ./quartz/bootstrap-cli.mjs build --concurrency=1"

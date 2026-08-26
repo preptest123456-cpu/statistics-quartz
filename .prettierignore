@@ -1,3 +1,6 @@
 public
 node_modules
 .quartz-cache
+
+# Authored notes: Prettier reflows tables and LaTeX in ways that hurt readability
+content
