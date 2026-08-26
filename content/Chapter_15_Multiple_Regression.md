@@ -1,4 +1,23 @@
+---
+title: "Chapter 15: Multiple Regression"
+chapter: 15
+tags:
+  - statistics
+  - regression
+  - multiple-regression
+  - multicollinearity
+  - dummy-variables
+  - logistic-regression
+  - residual-analysis
+---
+
 # Multiple Regression
+
+> [!tip] Companion Jupyter notebook
+> Work the Butler Trucking example interactively. The data is inline, so there is nothing to
+> download and no setup — Colab runs it in the browser.
+>
+> **[▶ Run in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb)** · [View on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) · [Download `.ipynb`](https://raw.githubusercontent.com/preptest123456-cpu/statistics-jupyter/main/notebooks/Chapter_15_Multiple_Regression.ipynb)
 
 ## Statistics in Practice: dunnhumby
 

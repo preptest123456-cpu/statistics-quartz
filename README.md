@@ -34,6 +34,17 @@ npm run verify   # build the site, then fail on any dead internal link
 
 The same check runs in CI and on every deploy.
 
+## Companion notebooks
+
+Chapters 14 and 15 have worked examples in Jupyter, kept in
+[statistics-jupyter](https://github.com/preptest123456-cpu/statistics-jupyter). Each of
+those chapter pages opens with a callout linking straight to Colab, GitHub, and a
+download — the data is inline, so they run in the browser with no setup.
+
+To add one for another chapter: drop the notebook in that repo under `notebooks/`, then
+copy the callout from the top of `content/Chapter_14_Simple_Linear_Regression.md` and
+swap the filename.
+
 ## The glossary
 
 The chapter notes link concepts with wikilinks (`[[standard deviation]]`) that had no
@@ -52,12 +63,14 @@ running it or move edited notes out of `content/glossary/`.
 ## Deploying
 
 Pushing to `main` triggers `.github/workflows/deploy.yml`, which builds the site,
-checks its links, and publishes to GitHub Pages.
+checks its links, and publishes to GitHub Pages. `site-check.yml` runs the same build
+and link check on pull requests and other branches.
 
-> The other workflows (`ci.yaml`, `build-preview.yaml`, `deploy-preview.yaml`,
-> `docker-build-push.yaml`) came from upstream Quartz and are gated on
-> `github.repository == 'jackyzha0/quartz'`, so they never run here.
-> `site-check.yml` is the one that runs on pull requests in this fork.
+Those two are the only workflows here. The upstream Quartz ones (`ci.yaml`,
+`build-preview.yaml`, `deploy-preview.yaml`, `docker-build-push.yaml`) were gated on
+`github.repository == 'jackyzha0/quartz'` and could never run on this fork, so they were
+removed along with upstream's funding, issue, and PR templates, its code of conduct, and
+the Dockerfile. All of it remains in git history if you want any of it back.
 
 ## Upstream
 

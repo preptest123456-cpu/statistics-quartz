@@ -39,9 +39,15 @@ Master index linking every chapter and appendix in this vault.
 
 ## Companion Jupyter notebooks
 
-- [Open Chapter 14 — Simple Linear Regression in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb) — Armands Pizza worked example
-- [Open Chapter 15 — Multiple Regression in Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) — Butler Trucking worked example
-- [View all notebooks on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/tree/main/notebooks)
+Two chapters have worked examples in Jupyter. Both run in the browser with no setup —
+the data is inline, and each chapter page carries the same launch links at the top.
+
+| Chapter | Example | Run it |
+| --- | --- | --- |
+| [[Chapter_14_Simple_Linear_Regression\|Chapter 14 — Simple Linear Regression]] | Armand's Pizza Parlors | [▶ Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb) · [GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_14_Simple_Linear_Regression.ipynb) |
+| [[Chapter_15_Multiple_Regression\|Chapter 15 — Multiple Regression]] | Butler Trucking | [▶ Colab](https://colab.research.google.com/github/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) · [GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/blob/main/notebooks/Chapter_15_Multiple_Regression.ipynb) |
+
+[All notebooks on GitHub](https://github.com/preptest123456-cpu/statistics-jupyter/tree/main/notebooks)
 
 ---
 _Total: 20 chapter and appendix notes, plus the glossary._
