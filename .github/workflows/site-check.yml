@@ -1,0 +1,48 @@
+# The upstream Quartz workflows (ci.yaml, build-preview.yaml, docker-build-push.yaml)
+# are all gated on `github.repository == 'jackyzha0/quartz'`, so none of them run here.
+# This is the check that actually runs on this fork.
+name: Check site build
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main # main is already covered by the deploy workflow
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and verify links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Quartz reads git history for created/modified dates
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build Quartz
+        run: npx quartz build
+
+      - name: Check for dead internal links
+        run: npm run check:links
+
+      - name: Check the glossary is up to date
+        run: |
+          npm run glossary
+          if ! git diff --quiet -- content/glossary; then
+            echo "::error::content/glossary is stale. Run 'npm run glossary' and commit the result."
+            git diff --stat -- content/glossary
+            exit 1
+          fi
